@@ -1,0 +1,30 @@
+diff -r 1744bcc85d8a src/nxt_conn_read.c
+--- a/src/nxt_conn_read.c	Thu Nov 19 21:13:19 2020 +0300
++++ b/src/nxt_conn_read.c	Mon Nov 30 21:35:58 2020 +0000
+@@ -242,9 +242,9 @@
+ 
+         default:
+             c->socket.error = err;
+-            nxt_log(c->socket.task, nxt_socket_error_level(err),
+-                    "recv(%d, %p, %uz, %ui) failed %E",
+-                    c->socket.fd, buf, size, flags, err);
++            //nxt_log(c->socket.task, nxt_socket_error_level(err),
++            //        "recv(%d, %p, %uz, %ui) failed %E",
++            //        c->socket.fd, buf, size, flags, err);
+ 
+             return NXT_ERROR;
+         }
+diff -r 1744bcc85d8a src/nxt_conn_write.c
+--- a/src/nxt_conn_write.c	Thu Nov 19 21:13:19 2020 +0300
++++ b/src/nxt_conn_write.c	Mon Nov 30 21:35:58 2020 +0000
+@@ -374,8 +374,8 @@
+ 
+         default:
+             sb->error = err;
+-            nxt_log(task, nxt_socket_error_level(err),
+-                    "send(%d, %p, %uz) failed %E", sb->socket, buf, size, err);
++            //nxt_log(task, nxt_socket_error_level(err),
++            //        "send(%d, %p, %uz) failed %E", sb->socket, buf, size, err);
+ 
+             return NXT_ERROR;
+         }

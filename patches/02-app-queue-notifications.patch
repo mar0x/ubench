@@ -1,0 +1,81 @@
+diff -r 1744bcc85d8a src/nxt_app_queue.h
+--- a/src/nxt_app_queue.h	Thu Nov 19 21:13:19 2020 +0300
++++ b/src/nxt_app_queue.h	Mon Nov 30 21:35:58 2020 +0000
+@@ -23,7 +23,7 @@
+ 
+ 
+ typedef struct {
+-    nxt_app_nncq_atomic_t  nitems;
++    nxt_app_nncq_atomic_t  notifications;
+     nxt_app_nncq_t         free_items;
+     nxt_app_nncq_t         queue;
+     nxt_app_queue_item_t   items[NXT_APP_QUEUE_SIZE];
+@@ -42,7 +42,7 @@
+         nxt_app_nncq_enqueue(&q->free_items, i);
+     }
+ 
+-    q->nitems = 0;
++    q->notifications = 0;
+ }
+ 
+ 
+@@ -67,7 +67,11 @@
+ 
+     nxt_app_nncq_enqueue(&q->queue, i);
+ 
+-    i = nxt_atomic_fetch_add(&q->nitems, 1);
++    i = nxt_atomic_fetch_add(&q->notifications, 1);
++
++    if (i != 0) {
++        nxt_atomic_fetch_add(&q->notifications, -1);
++    }
+ 
+     if (notify != NULL) {
+         *notify = (i == 0);
+@@ -77,6 +81,13 @@
+ }
+ 
+ 
++nxt_inline void
++nxt_app_queue_notification_received(nxt_app_queue_t volatile *q)
++{
++    nxt_atomic_fetch_add(&q->notifications, -1);
++}
++
++
+ nxt_inline nxt_bool_t
+ nxt_app_queue_cancel(nxt_app_queue_t volatile *q, uint32_t cookie,
+     uint32_t tracking)
+@@ -110,8 +121,6 @@
+ 
+     nxt_app_nncq_enqueue(&q->free_items, i);
+ 
+-    nxt_atomic_fetch_add(&q->nitems, -1);
+-
+     return res;
+ }
+ 
+diff -r 1744bcc85d8a src/nxt_unit.c
+--- a/src/nxt_unit.c	Thu Nov 19 21:13:19 2020 +0300
++++ b/src/nxt_unit.c	Mon Nov 30 21:35:58 2020 +0000
+@@ -6073,7 +6073,10 @@
+ nxt_unit_shared_port_recv(nxt_unit_ctx_t *ctx, nxt_unit_port_t *port,
+     nxt_unit_read_buf_t *rbuf)
+ {
+-    int  res;
++    int  		  res;
++    nxt_unit_port_impl_t  *port_impl;
++
++    port_impl = nxt_container_of(port, nxt_unit_port_impl_t, port);
+ 
+ retry:
+ 
+@@ -6086,6 +6089,8 @@
+         }
+ 
+         if (nxt_unit_is_read_queue(rbuf)) {
++            nxt_app_queue_notification_received(port_impl->queue);
++
+             nxt_unit_debug(ctx, "port{%d,%d} recv %d read_queue",
+                            (int) port->id.pid, (int) port->id.id, (int) rbuf->size);
+ 
