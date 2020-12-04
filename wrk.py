@@ -5,6 +5,7 @@
 import math
 import os
 import re
+import resource
 import subprocess
 import sys
 from statistics import mean, stdev, variance
@@ -99,12 +100,16 @@ def filtered_wrk(n, c, url, min_time=1.0, max_dev=0.01):
 
 if __name__ == '__main__':
 
+    url = 'http://127.0.0.1:8400/'
+    c = 1
+
     if len(sys.argv) > 1:
         url = sys.argv[1]
-    else:
-        url = 'http://127.0.0.1:8400/'
 
-    c = 1
+    if len(sys.argv) > 2:
+        c = int(sys.argv[2])
+
+    resource.setrlimit(resource.RLIMIT_NOFILE, (65536, 65536))
 
     while c <= 16384:
         rps, dev, min_rps, max_rps = filtered_wrk(nreq, c, url)
