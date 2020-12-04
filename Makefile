@@ -53,15 +53,24 @@ unit/ctags: | unit
 .PHONY: start
 start: unit/unit.pid
 
+unit/unit.pid: SHELL:=/bin/bash
+
 unit/unit.pid: | unit/build/unitd $(HW_LIST) $(NODE_MODULE)
 	@echo "Starting Unit ..."
 	@cd unit && \
 	ulimit -S -n 65536 && \
 	( [ -f unit.log ] && mv unit.log unit-`date +'%Y%m%d-%H%M%S'`.log ||: ) && \
-	build/unitd && \
-	( for i in 0 1 2; do sleep 1 && echo -n . ; done ) && echo "" && \
-	curl -X PUT -d @../unit.conf http://127.0.0.1:8443/config && \
-	ps aux | grep unit | grep -v grep
+	build/unitd
+	@( for i in 0 1 2; do sleep 1 && echo -n . ; done ) && echo ""
+	@curl -X PUT -d @unit.conf http://127.0.0.1:8443/config
+	@ps aux | grep unit | grep -v grep
+	@echo "Set router threads CPU affinity ..."
+	@rpid=`ps aux | grep -F 'unit: router' | grep -v grep | awk '{ print $$2 }'` && \
+	c=7; for p in `ls /proc/$$rpid/task/`; do taskset -c -p $$c $$p >/dev/null; (( c++ )); done
+	@echo "Set C-application processes CPU affinity ..."
+	@c=0; for p in `ps aux | grep hw_c | grep -v grep | awk '{ print $$2 }'`; do taskset -c -p $$c $$p >/dev/null; (( c++ )); done
+	@echo "Set WSGI application processes CPU affinity ..."
+	@c=0; for p in `ps aux | grep hw-wsgi | grep -v grep | awk '{ print $$2 }'`; do taskset -c -p $$c $$p >/dev/null; (( c++ )); done
 
 .PHONY: stop
 .IGNORE: stop
