@@ -40,7 +40,19 @@ static body_def_t  body_def[] = {
     BODY_DEF(14,      "/"),
     BODY_DEF(1024,    "/1k"),
     BODY_DEF(4096,    "/4k"),
+    BODY_DEF(16384,   "/16k"),
+    BODY_DEF(65536,   "/64k"),
     BODY_DEF(1048576, "/1m")
+};
+
+enum {
+    BODY_14,
+    BODY_1K,
+    BODY_4K,
+    BODY_16K,
+    BODY_64K,
+    BODY_1M,
+    BODY_MAX,
 };
 
 int
@@ -69,7 +81,7 @@ main(int argc, char **argv)
         return 1;
     }
 
-    for (i = 0; i < 4; i++) {
+    for (i = 0; i < BODY_MAX; i++) {
         bd = &body_def[i];
         bd->body = malloc(bd->size);
 
@@ -165,16 +177,30 @@ hw_request_handler(nxt_unit_request_info_t *req)
     nxt_unit_request_t  *r;
 
     r = req->request;
-    bd = &body_def[0];
+    bd = &body_def[BODY_14];
 
-    if (r->path_length == 3) {
+    switch (r->path_length) {
+    case 1: break;
+    case 3:
         path = nxt_unit_sptr_get(&r->path);
 
         switch (path[1] + path[2]) {
-        case '1' + 'k': bd = &body_def[1]; break;
-        case '4' + 'k': bd = &body_def[2]; break;
-        case '1' + 'm': bd = &body_def[3]; break;
+        case '1' + 'k': bd = &body_def[BODY_1K]; break;
+        case '4' + 'k': bd = &body_def[BODY_4K]; break;
+        case '1' + 'm': bd = &body_def[BODY_1M]; break;
         }
+
+        break;
+
+    case 4:
+        path = nxt_unit_sptr_get(&r->path);
+
+        switch (path[1] + path[2]) {
+        case '1' + '6': bd = &body_def[BODY_16K]; break;
+        case '6' + '4': bd = &body_def[BODY_64K]; break;
+        }
+
+        break;
     }
 
     rc = nxt_unit_response_init(req, 200 /* Status code. */,
