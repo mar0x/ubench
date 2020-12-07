@@ -1,0 +1,24 @@
+# HG changeset patch
+# Parent  f4a399f627c221e0b2813112670343d9542a1f72
+Libunit: fixed shared memory waiting.
+
+Function nxt_unit_ctx_port_recv() may return NXT_UNIT_AGAIN code and it is
+required to try to reread message in this case.
+
+The issue reproduced in load tests with response size 16k and more.
+
+diff --git a/src/nxt_unit.c b/src/nxt_unit.c
+--- a/src/nxt_unit.c
++++ b/src/nxt_unit.c
+@@ -3606,7 +3606,10 @@ nxt_unit_wait_shm_ack(nxt_unit_ctx_t *ct
+             return NXT_UNIT_ERROR;
+         }
+ 
+-        res = nxt_unit_ctx_port_recv(ctx, ctx_impl->read_port, rbuf);
++        do {
++            res = nxt_unit_ctx_port_recv(ctx, ctx_impl->read_port, rbuf);
++        } while (res == NXT_UNIT_AGAIN);
++
+         if (res == NXT_UNIT_ERROR) {
+             nxt_unit_read_buf_release(ctx, rbuf);
+ 
