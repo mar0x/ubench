@@ -51,7 +51,7 @@ unit/ctags: | unit
 	cd unit && ctags -R src go
 
 .PHONY: start
-start: unit/unit.pid
+start: unit/unit.pid hw/uvicorn.pid
 
 unit/unit.pid: SHELL:=/bin/bash
 
@@ -71,15 +71,37 @@ unit/unit.pid: | unit/build/unitd $(HW_LIST) $(NODE_MODULE)
 	@c=0; for p in `ps aux | grep hw_c | grep -v grep | awk '{ print $$2 }'`; do taskset -c -p $$c $$p >/dev/null; (( c++ )); done
 	@echo "Set WSGI application processes CPU affinity ..."
 	@c=0; for p in `ps aux | grep hw-wsgi | grep -v grep | awk '{ print $$2 }'`; do taskset -c -p $$c $$p >/dev/null; (( c++ )); done
+	@echo "Set ASGI (uvloop) application processes CPU affinity ..."
+	@c=0; for p in `ps aux | grep hw-asgi-uvloop | grep -v grep | awk '{ print $$2 }'`; do taskset -c -p $$c $$p >/dev/null; (( c++ )); done
 
-.PHONY: stop
-.IGNORE: stop
-stop:
+hw/uvicorn.pid: SHELL:=/bin/bash
+
+hw/uvicorn.pid: | hw/venv/.uvicorn hw/venv/.uvloop
+	@cd hw && source venv/bin/activate && \
+	ulimit -S -n 65536 && \
+	( uvicorn --host 0.0.0.0 --port 8300 --loop uvloop --no-access-log --workers 8 hw-asgi:application & )
+	@( for i in 0 1 2; do sleep 1 && echo -n . ; done ) && echo ""
+	@echo "Set uvicorn application processes CPU affinity ..."
+	@c=0; for p in `ps aux | grep spawn_main | grep -v grep | awk '{ print $$2 }'`; do taskset -c -p $$c $$p >/dev/null; (( c++ )); done
+	@ps aux | grep 'spawn_main\|bin/uvicorn' | grep -v grep | awk '{ print $$2 }' > $@
+
+.PHONY: stop stop-unit stop-uvicorn
+.IGNORE: stop stop-unit stop-uvicorn
+stop: stop-unit stop-uvicorn
+
+stop-unit:
 	@echo "Stopping Unit ..."
 	@[ -f unit/unit.pid ] && \
 	kill `cat unit/unit.pid` && \
 	( for i in 0 1 2; do sleep 1 && echo -n . ; done ) && echo "" && \
 	( ps aux | grep unit | grep -v grep ||: )
+
+stop-uvicorn:
+	@echo "Stopping uvicorn ..."
+	@[ -f hw/uvicorn.pid ] && \
+	kill `cat hw/uvicorn.pid` && \
+	( for i in 0 1 2; do sleep 1 && echo -n . ; done ) && echo "" && \
+	rm -f hw/uvicorn.pid
 
 
 $(NODE_MODULE): unit/build/.configure $(LIBUNIT)
