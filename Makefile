@@ -50,8 +50,11 @@ unit/build/unitd $(LIBUNIT) &: unit/build/.configure
 unit/ctags: | unit
 	cd unit && ctags -R src go
 
-.PHONY: start
-start: unit/unit.pid hw/uvicorn.pid
+.PHONY: start start-unit start-uvicorn
+start: start-unit start-uvicorn
+
+start-unit: unit/unit.pid
+start-uvicorn: hw/uvicorn.pid
 
 unit/unit.pid: SHELL:=/bin/bash
 
@@ -77,10 +80,11 @@ unit/unit.pid: | unit/build/unitd $(HW_LIST) $(NODE_MODULE)
 hw/uvicorn.pid: SHELL:=/bin/bash
 
 hw/uvicorn.pid: | hw/venv/.uvicorn hw/venv/.uvloop
+	@echo -n "Starting uvicorn "
 	@cd hw && source venv/bin/activate && \
 	ulimit -S -n 65536 && \
-	( uvicorn --host 0.0.0.0 --port 8300 --loop uvloop --no-access-log --workers 8 hw-asgi:application & )
-	@( for i in 0 1 2; do sleep 1 && echo -n . ; done ) && echo ""
+	( uvicorn --host 0.0.0.0 --port 8300 --loop uvloop --log-level warning --no-access-log --no-use-colors --workers 8 hw-asgi:application & )
+	@( for i in 0 1 2; do sleep 1 && echo -n . ; done ) && echo " done"
 	@echo "Set uvicorn application processes CPU affinity ..."
 	@c=0; for p in `ps aux | grep spawn_main | grep -v grep | awk '{ print $$2 }'`; do taskset -c -p $$c $$p >/dev/null; (( c++ )); done
 	@ps aux | grep 'spawn_main\|bin/uvicorn' | grep -v grep | awk '{ print $$2 }' > $@
@@ -90,18 +94,24 @@ hw/uvicorn.pid: | hw/venv/.uvicorn hw/venv/.uvloop
 stop: stop-unit stop-uvicorn
 
 stop-unit:
-	@echo "Stopping Unit ..."
-	@[ -f unit/unit.pid ] && \
-	kill `cat unit/unit.pid` && \
-	( for i in 0 1 2; do sleep 1 && echo -n . ; done ) && echo "" && \
-	( ps aux | grep unit | grep -v grep ||: )
+	@echo -n "Stopping Unit "
+	@if [ -f unit/unit.pid ]; then \
+	    kill `cat unit/unit.pid` && \
+	    ( for i in 0 1 2; do sleep 1 && echo -n . ; done ) && echo " done" && \
+	    ( ps aux | grep unit | grep -v grep ||: ); \
+	else \
+	    echo "... already stopped"; \
+	fi
 
 stop-uvicorn:
-	@echo "Stopping uvicorn ..."
-	@[ -f hw/uvicorn.pid ] && \
-	kill `cat hw/uvicorn.pid` && \
-	( for i in 0 1 2; do sleep 1 && echo -n . ; done ) && echo "" && \
-	rm -f hw/uvicorn.pid
+	@echo -n "Stopping uvicorn "
+	@if [ -f hw/uvicorn.pid ]; then \
+	    kill `cat hw/uvicorn.pid` && \
+	    ( for i in 0 1 2; do sleep 1 && echo -n . ; done ) && echo " done" && \
+	    rm -f hw/uvicorn.pid; \
+	else \
+	    echo "... already stopped"; \
+	fi
 
 
 $(NODE_MODULE): unit/build/.configure $(LIBUNIT)
