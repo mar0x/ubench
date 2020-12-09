@@ -67,7 +67,7 @@ unit/build/unitd $(LIBUNIT) &: unit/build/.configure
 unit/ctags: | unit
 	cd unit && ctags -R src go
 
-.PHONY: start start-unit start-uvicorn start-jetty
+.PHONY: start start-unit start-uvicorn start-jetty start-go
 start: start-unit
 
 start-unit: unit/unit.pid
@@ -118,9 +118,19 @@ hw/jhw-base/jetty.pid: | hw/$(JETTY_NAME)-$(JETTY_VER) hw/jhw-base hw/jhw-base/w
 	$(WAIT_3_DONE)
 
 
-.PHONY: stop stop-unit stop-uvicorn stop-jetty
-.IGNORE: stop stop-unit stop-uvicorn stop-jetty
-stop: stop-unit stop-uvicorn stop-jetty
+start-go: hw/hw_go.pid
+
+hw/hw_go.pid: SHELL:=/bin/bash
+hw/hw_go.pid: | hw/hw_go
+	@echo "Starting Go ..."
+	@$(ULIMIT_FILES) && \
+	( ./hw/hw_go & echo $$! > $@ ) && \
+	$(WAIT_3_DONE)
+
+
+.PHONY: stop stop-unit stop-uvicorn stop-jetty stop-go
+.IGNORE: stop stop-unit stop-uvicorn stop-jetty stop-go
+stop: stop-unit stop-uvicorn stop-jetty stop-go
 
 stop-unit: SHELL:=/bin/bash
 stop-unit:
@@ -147,6 +157,15 @@ stop-jetty:
 	    kill `cat hw/jhw-base/jetty.pid` && \
 	    $(WAIT_3_DONE) && \
 	    rm -f hw/jhw-base/jetty.pid; \
+	fi
+
+stop-go: SHELL:=/bin/bash
+stop-go:
+	@if [ -f hw/hw_go.pid ]; then \
+	    echo -n "Stopping Go " && \
+	    kill `cat hw/hw_go.pid` && \
+	    $(WAIT_3_DONE) && \
+	    rm -f hw/hw_go.pid; \
 	fi
 
 
