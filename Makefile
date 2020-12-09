@@ -3,13 +3,27 @@
 CFLAGS=-O3
 LDFLAGS=
 
-COPT=--cc-opt=$(CFLAGS) --control=127.0.0.1:8443 --openssl --ld-opt=$(LDFLAGS)
+COPT=--cc-opt=$(CFLAGS) --control=127.0.0.1:8443 --ld-opt=$(LDFLAGS)
 COPT+=--modules=build --state=build --tmp=build --tests
 
-HW_LIST = hw/hw_c hw/hw_go hw/jhw/WEB-INF/classes/app.class \
-    hw/venv hw/venv/.uvloop hw/venv/.uvicorn hw/venv/.uwsgi
+JHW_CLASS = jhw/WEB-INF/classes/app.class
+
+HW_LIST = hw/hw_c hw/hw_go hw/$(JHW_CLASS) hw/venv hw/venv/.uvloop
 NODE_MODULE = hw/node_modules/unit-http/build/Release/unit-http.node
 LIBUNIT = unit/build/libunit.a
+
+JETTY_VER=9.4.35.v20201120
+JETTY_NAME=jetty-distribution
+JETTY_TAR=$(JETTY_NAME)-$(JETTY_VER).tar.gz
+JETTY_URL=https://repo1.maven.org/maven2/org/eclipse/jetty/$(JETTY_NAME)/$(JETTY_VER)/$(JETTY_TAR)
+
+WAIT_3_DONE = ( for i in 0 1 2; do sleep 1 && echo -n . ; done ) && echo " done"
+
+ifeq ($(shell uname -s),Darwin)
+   ULIMIT_FILES := true
+else
+   ULIMIT_FILES := ulimit -S -n 65536
+endif
 
 .PHONY: all clean
 
@@ -27,7 +41,9 @@ unit/.patched: patches | unit
 
 clean: stop
 	@echo "Cleaning all staff ..."
-	rm -rf unit hw/node_modules/unit-http $(HW_LIST) hw/__pycache__
+	rm -rf unit hw/node_modules/unit-http $(HW_LIST) \
+		hw/__pycache__ hw/package-lock.json \
+		hw/$(JETTY_NAME)-$(JETTY_VER) hw/$(JETTY_TAR) hw/jhw-base
 
 unit/build/.configure: unit/.patched
 	@echo "Configuring Unit and modules ..."
@@ -39,7 +55,8 @@ unit/build/.configure: unit/.patched
 	./configure perl && \
 	./configure ruby && \
 	./configure java && \
-	./configure nodejs && touch build/.configure
+	./configure nodejs
+	touch $@
 
 .NOTPARALLEL: unit/build/unitd $(LIBUNIT)
 
@@ -50,21 +67,19 @@ unit/build/unitd $(LIBUNIT) &: unit/build/.configure
 unit/ctags: | unit
 	cd unit && ctags -R src go
 
-.PHONY: start start-unit start-uvicorn
-start: start-unit start-uvicorn
+.PHONY: start start-unit start-uvicorn start-jetty
+start: start-unit
 
 start-unit: unit/unit.pid
-start-uvicorn: hw/uvicorn.pid
 
 unit/unit.pid: SHELL:=/bin/bash
-
 unit/unit.pid: | unit/build/unitd $(HW_LIST) $(NODE_MODULE)
 	@echo "Starting Unit ..."
 	@cd unit && \
-	ulimit -S -n 65536 && \
+	$(ULIMIT_FILES) && \
 	( [ -f unit.log ] && mv unit.log unit-`date +'%Y%m%d-%H%M%S'`.log ||: ) && \
 	build/unitd
-	@( for i in 0 1 2; do sleep 1 && echo -n . ; done ) && echo ""
+	@$(WAIT_3_DONE)
 	@curl -X PUT -d @unit.conf http://127.0.0.1:8443/config
 	@ps aux | grep unit | grep -v grep
 	@echo "Set router threads CPU affinity ..."
@@ -77,40 +92,61 @@ unit/unit.pid: | unit/build/unitd $(HW_LIST) $(NODE_MODULE)
 	@echo "Set ASGI (uvloop) application processes CPU affinity ..."
 	@c=0; for p in `ps aux | grep hw-asgi-uvloop | grep -v grep | awk '{ print $$2 }'`; do taskset -c -p $$c $$p >/dev/null; (( c++ )); done
 
-hw/uvicorn.pid: SHELL:=/bin/bash
 
+start-uvicorn: hw/uvicorn.pid
+
+hw/uvicorn.pid: SHELL:=/bin/bash
 hw/uvicorn.pid: | hw/venv/.uvicorn hw/venv/.uvloop
 	@echo -n "Starting uvicorn "
 	@cd hw && source venv/bin/activate && \
-	ulimit -S -n 65536 && \
+	$(ULIMIT_FILES) && \
 	( uvicorn --host 0.0.0.0 --port 8300 --loop uvloop --log-level warning --no-access-log --no-use-colors --workers 8 hw-asgi:application & )
-	@( for i in 0 1 2; do sleep 1 && echo -n . ; done ) && echo " done"
+	@$(WAIT_3_DONE)
 	@echo "Set uvicorn application processes CPU affinity ..."
 	@c=0; for p in `ps aux | grep spawn_main | grep -v grep | awk '{ print $$2 }'`; do taskset -c -p $$c $$p >/dev/null; (( c++ )); done
 	@ps aux | grep 'spawn_main\|bin/uvicorn' | grep -v grep | awk '{ print $$2 }' > $@
 
-.PHONY: stop stop-unit stop-uvicorn
-.IGNORE: stop stop-unit stop-uvicorn
-stop: stop-unit stop-uvicorn
 
+start-jetty: hw/jhw-base/jetty.pid
+
+hw/jhw-base/jetty.pid: SHELL:=/bin/bash
+hw/jhw-base/jetty.pid: | hw/$(JETTY_NAME)-$(JETTY_VER) hw/jhw-base hw/jhw-base/webapps/$(JHW_CLASS)
+	@echo "Starting Jetty ..."
+	@cd hw/jhw-base && \
+	$(ULIMIT_FILES) && \
+	( java -Dorg.eclipse.jetty.LEVEL=WARN -jar ../$(JETTY_NAME)-$(JETTY_VER)/start.jar & echo $$! > jetty.pid ) && \
+	$(WAIT_3_DONE)
+
+
+.PHONY: stop stop-unit stop-uvicorn stop-jetty
+.IGNORE: stop stop-unit stop-uvicorn stop-jetty
+stop: stop-unit stop-uvicorn stop-jetty
+
+stop-unit: SHELL:=/bin/bash
 stop-unit:
-	@echo -n "Stopping Unit "
 	@if [ -f unit/unit.pid ]; then \
+	    echo -n "Stopping Unit " && \
 	    kill `cat unit/unit.pid` && \
-	    ( for i in 0 1 2; do sleep 1 && echo -n . ; done ) && echo " done" && \
+	    $(WAIT_3_DONE) && \
 	    ( ps aux | grep unit | grep -v grep ||: ); \
-	else \
-	    echo "... already stopped"; \
 	fi
 
+stop-uvicorn: SHELL:=/bin/bash
 stop-uvicorn:
-	@echo -n "Stopping uvicorn "
 	@if [ -f hw/uvicorn.pid ]; then \
+	    echo -n "Stopping uvicorn " && \
 	    kill `cat hw/uvicorn.pid` && \
-	    ( for i in 0 1 2; do sleep 1 && echo -n . ; done ) && echo " done" && \
+	    $(WAIT_3_DONE) && \
 	    rm -f hw/uvicorn.pid; \
-	else \
-	    echo "... already stopped"; \
+	fi
+
+stop-jetty: SHELL:=/bin/bash
+stop-jetty:
+	@if [ -f hw/jhw-base/jetty.pid ]; then \
+	    echo -n "Stopping jetty " && \
+	    kill `cat hw/jhw-base/jetty.pid` && \
+	    $(WAIT_3_DONE) && \
+	    rm -f hw/jhw-base/jetty.pid; \
 	fi
 
 
@@ -129,9 +165,9 @@ $(GO_MODULE): | unit/build/.configure
 	@echo "Compiling C application ..."
 	$(CC) -o $@ $< -I unit/src -I unit/build -L unit/build -lunit -pthread
 
-%.class: %.java unit/build/.configure
+%.class: %.java | unit/build/.configure
 	@echo "Compiling Java application ..."
-	javac -target 8 -source 8 -classpath unit/build/tomcat-servlet-api-9.0.39.jar $<
+	javac -target 8 -source 8 -classpath unit/build/tomcat-servlet-api-9.0.39.jar -Xlint:deprecation $<
 
 %_go: %.go $(LIBUNIT) $(GO_MODULE)
 	@echo "Compiling Go application ..."
@@ -140,26 +176,45 @@ $(GO_MODULE): | unit/build/.configure
 
 hw/venv:
 	@echo "Creating Python virtual environment ..."
-	python3.8 -m venv hw/venv
+	python3.8 -m venv $@
 
 hw/venv/.uvloop: | hw/venv
 	@echo "Installing Python uvloop ..."
-	VIRTUAL_ENV=$(shell pwd)/hw/venv ./hw/venv/bin/pip install uvloop && \
+	VIRTUAL_ENV=$(shell pwd)/hw/venv ./hw/venv/bin/pip install uvloop
 	touch $@
 
 hw/venv/.uvicorn: | hw/venv
 	@echo "Installing Python uvicorn ..."
-	VIRTUAL_ENV=$(shell pwd)/hw/venv ./hw/venv/bin/pip install uvicorn[standard] && \
+	VIRTUAL_ENV=$(shell pwd)/hw/venv ./hw/venv/bin/pip install uvicorn[standard]
 	touch $@
 
 hw/venv/.uwsgi: | hw/venv
 	@echo "Installing Python uwsgi ..."
-	VIRTUAL_ENV=$(shell pwd)/hw/venv ./hw/venv/bin/pip install uwsgi && \
+	VIRTUAL_ENV=$(shell pwd)/hw/venv ./hw/venv/bin/pip install uwsgi
 	touch $@
 
 
+hw/$(JETTY_NAME)-$(JETTY_VER): hw/$(JETTY_TAR)
+	tar -C hw -xzf $<
+
+hw/$(JETTY_TAR):
+	curl -o "$@" "$(JETTY_URL)"
+
+hw/jhw-base:
+	@echo "Preparing jhw-base ..."
+	mkdir -p $@/webapps
+	echo '--module=server' > $@/start.ini
+	echo '--module=deploy' >> $@/start.ini
+	echo '--module=websocket' >> $@/start.ini
+	echo '--module=http' >> $@/start.ini
+	echo 'jetty.http.port=8004' >> $@/start.ini
+
+hw/jhw-base/webapps/$(JHW_CLASS): hw/$(JHW_CLASS) | hw/jhw-base
+	cp -r hw/jhw hw/jhw-base/webapps/
+
+
 wrk:
-	@echo "Fetching wrk sources from Git ..."
+	@echo "Fetching wrk sources from GitHub ..."
 	git clone https://github.com/wg/wrk.git
 
 wrk/wrk: | wrk
