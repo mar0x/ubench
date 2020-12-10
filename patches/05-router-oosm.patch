@@ -1,0 +1,14 @@
+diff -r 8c05e9ddbffb src/nxt_router.c
+--- a/src/nxt_router.c	Wed Dec 09 16:17:46 2020 +0000
++++ b/src/nxt_router.c	Thu Dec 10 20:39:36 2020 +0000
+@@ -5394,6 +5394,10 @@
+     nxt_thread_mutex_lock(&process->incoming.mutex);
+ 
+     for (i = 0; i < process->incoming.size; i++) {
++        if (nxt_slow_path(process->incoming.elts[i].mmap_handler == NULL)) {
++            continue;
++        }
++
+         hdr = process->incoming.elts[i].mmap_handler->hdr;
+         m = hdr->free_map;
+ 
