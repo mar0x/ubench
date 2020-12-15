@@ -14,10 +14,11 @@ from datetime import datetime
 nreq = 10000
 mydir = os.path.dirname(sys.argv[0])
 wrk_bin = os.path.join(mydir, 'wrk', 'wrk')
-max_threads = 8
+max_threads = 14
 
 detailed = open("detailed.log", 'a')
 result = open("result.txt", 'a')
+raw = open("raw.log", 'a')
 
 def log(f, *args):
     t = datetime.now().strftime("%H:%M:%S")
@@ -26,22 +27,45 @@ def log(f, *args):
     print(t + ' ' + ' '.join(a), file=f)
     f.flush()
 
+def log_(f, *args):
+    t = datetime.now().strftime("%H:%M:%S")
+    a = [ str(i) for i in args ]
+    print(t + ' ' + ' '.join(a), file=f)
+    f.flush()
+
 def wrk(n, c, url):
     t = min(max_threads, c)
+
+    log_(raw, wrk_bin, '-d', '10', '-c', str(c), '-t', str(t), url)
+
     p = subprocess.Popen([wrk_bin, '-d', '10', '-c', str(c), '-t', str(t), url],
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     o, e = p.communicate()
 
     rc = p.returncode
 
+    log_(raw, rc)
+
+    o = o.decode('utf-8').rstrip()
+    e = e.decode('utf-8').rstrip()
+
+    if o:
+        for l in o.split('\n'):
+            log_(raw, "O:", l)
+
+    if e:
+        for l in e.split('\n'):
+            log_(raw, "E:", l)
+
     if rc != 0:
-        print(str(o) + '\n' + str(e))
+        print(o)
+        print(e)
         return None
 
     res = dict()
 
-    for l in o.split(b'\n'):
-        r = re.search(b'^([^/]+/sec):\s+(.+)$', l)
+    for l in o.split('\n'):
+        r = re.search('^([^/]+/sec):\s+(.+)$', l)
         if r:
             v = r[2]
             try:
@@ -50,10 +74,16 @@ def wrk(n, c, url):
                 res[r[1]] = v
             continue
 
-        r = re.search(b'^\s*([0-9]+)\s+requests in\s+([0-9.]+)', l)
+        r = re.search('^\s*([0-9]+)\s+requests in\s+([0-9.]+)', l)
         if r:
-            res[b'time'] = float(r[2])
-            res[b'requests'] = int(r[1])
+            res['time'] = float(r[2])
+            res['requests'] = int(r[1])
+            continue
+
+        r = re.search('^\s*Latency\s+([0-9.]+)([^\s]+)', l)
+        if r:
+            res['latency'] = float(r[1]);
+            continue
 
     return res
 
@@ -71,9 +101,9 @@ def filtered_wrk(n, c, url, min_time=1.0, max_dev=0.01):
         if r is None:
             break
 
-        rps = r[b'Requests/sec']
-        time = r[b'time']
-        total = r[b'requests']
+        rps = r['Requests/sec']
+        time = r['time']
+        total = r['requests']
 
         rps_history.append(rps)
 
@@ -84,10 +114,10 @@ def filtered_wrk(n, c, url, min_time=1.0, max_dev=0.01):
         else:
             dev = None
 
-        log(detailed, c, total, time, rps, m, dev)
+        log(detailed, c, total, time, rps, m, dev, r['latency'])
 
         if dev and dev <= max_dev:
-            return m, dev, min(rps_history), max(rps_history)
+            return m, dev, min(rps_history), max(rps_history), r['latency']
 
         if dev:
             var_mean[dev] = m
@@ -96,7 +126,7 @@ def filtered_wrk(n, c, url, min_time=1.0, max_dev=0.01):
 
     dev = min(var_mean.keys())
 
-    return var_mean[dev], dev, min(rps_history), max(rps_history)
+    return var_mean[dev], dev, min(rps_history), max(rps_history), r['latency']
 
 if __name__ == '__main__':
 
@@ -112,11 +142,11 @@ if __name__ == '__main__':
     resource.setrlimit(resource.RLIMIT_NOFILE, (65536, 65536))
 
     while c <= 16384:
-        rps, dev, min_rps, max_rps = filtered_wrk(nreq, c, url)
+        rps, dev, min_rps, max_rps, lat = filtered_wrk(nreq, c, url)
 
-        log(result, url, c, rps, dev, min_rps, max_rps)
+        log(result, url, c, rps, dev, min_rps, max_rps, lat)
 
-        if c < 1024:
+        if c < 2048:
             c *= 2
         else:
-            c += 1024
+            c += 2048
