@@ -1,52 +1,81 @@
-diff -r 1744bcc85d8a src/nxt_app_queue.h
---- a/src/nxt_app_queue.h	Thu Nov 19 21:13:19 2020 +0300
-+++ b/src/nxt_app_queue.h	Mon Nov 30 21:35:58 2020 +0000
-@@ -23,7 +23,7 @@
+# HG changeset patch
+# Parent  3da6943dbeaeabac218ea2cb3826e439c076ed11
+Limiting app queue notifications count in socket.
+
+Under high load, a queue synchonization issue may occur, starting from the
+steady state when an app queue message is dequeued immediately after it has been
+enqueued.  In this state, the router always puts the first message in the queue
+and is forced to notify the app about a new message in an empty queue using a
+socket pair.  On the other hand, the application dequeues and processes the
+message without reading the notification from the socket, so the socket buffer
+overflows with notifications.
+
+The issue was reproduced during Unit load tests.  After a socket buffer
+overflow, the router is unable to notify the app about a new first message.
+When another message is enqueued, a notification is not required, so the queue
+grows without being read by the app.  As a result, request processing stops.
+
+This patch changes the notification algorithm by counting the notifications in
+the pipe instead of getting the number of messages in the queue.
+
+diff --git a/src/nxt_app_queue.h b/src/nxt_app_queue.h
+--- a/src/nxt_app_queue.h
++++ b/src/nxt_app_queue.h
+@@ -23,7 +23,7 @@ typedef struct {
  
  
  typedef struct {
 -    nxt_app_nncq_atomic_t  nitems;
-+    nxt_app_nncq_atomic_t  notifications;
++    nxt_app_nncq_atomic_t  notified;
      nxt_app_nncq_t         free_items;
      nxt_app_nncq_t         queue;
      nxt_app_queue_item_t   items[NXT_APP_QUEUE_SIZE];
-@@ -42,7 +42,7 @@
+@@ -42,7 +42,7 @@ nxt_app_queue_init(nxt_app_queue_t volat
          nxt_app_nncq_enqueue(&q->free_items, i);
      }
  
 -    q->nitems = 0;
-+    q->notifications = 0;
++    q->notified = 0;
  }
  
  
-@@ -67,7 +67,11 @@
+@@ -50,8 +50,8 @@ nxt_inline nxt_int_t
+ nxt_app_queue_send(nxt_app_queue_t volatile *q, const void *p,
+     uint8_t size, uint32_t tracking, int *notify, uint32_t *cookie)
+ {
++    int                    i;
+     nxt_app_queue_item_t   *qi;
+-    nxt_app_nncq_atomic_t  i;
+ 
+     i = nxt_app_nncq_dequeue(&q->free_items);
+     if (i == nxt_app_nncq_empty(&q->free_items)) {
+@@ -67,16 +67,23 @@ nxt_app_queue_send(nxt_app_queue_t volat
  
      nxt_app_nncq_enqueue(&q->queue, i);
  
 -    i = nxt_atomic_fetch_add(&q->nitems, 1);
-+    i = nxt_atomic_fetch_add(&q->notifications, 1);
-+
-+    if (i != 0) {
-+        nxt_atomic_fetch_add(&q->notifications, -1);
-+    }
++    i = nxt_atomic_cmp_set(&q->notified, 0, 1);
  
      if (notify != NULL) {
-         *notify = (i == 0);
-@@ -77,6 +81,13 @@
+-        *notify = (i == 0);
++        *notify = i;
+     }
+ 
+     return NXT_OK;
  }
  
  
 +nxt_inline void
 +nxt_app_queue_notification_received(nxt_app_queue_t volatile *q)
 +{
-+    nxt_atomic_fetch_add(&q->notifications, -1);
++    q->notified = 0;
 +}
 +
 +
  nxt_inline nxt_bool_t
  nxt_app_queue_cancel(nxt_app_queue_t volatile *q, uint32_t cookie,
      uint32_t tracking)
-@@ -110,8 +121,6 @@
+@@ -110,8 +117,6 @@ nxt_app_queue_recv(nxt_app_queue_t volat
  
      nxt_app_nncq_enqueue(&q->free_items, i);
  
@@ -55,22 +84,22 @@ diff -r 1744bcc85d8a src/nxt_app_queue.h
      return res;
  }
  
-diff -r 1744bcc85d8a src/nxt_unit.c
---- a/src/nxt_unit.c	Thu Nov 19 21:13:19 2020 +0300
-+++ b/src/nxt_unit.c	Mon Nov 30 21:35:58 2020 +0000
-@@ -6073,7 +6073,10 @@
+diff --git a/src/nxt_unit.c b/src/nxt_unit.c
+--- a/src/nxt_unit.c
++++ b/src/nxt_unit.c
+@@ -6092,7 +6092,10 @@ static int
  nxt_unit_shared_port_recv(nxt_unit_ctx_t *ctx, nxt_unit_port_t *port,
      nxt_unit_read_buf_t *rbuf)
  {
 -    int  res;
-+    int  		  res;
++    int                   res;
 +    nxt_unit_port_impl_t  *port_impl;
 +
 +    port_impl = nxt_container_of(port, nxt_unit_port_impl_t, port);
  
  retry:
  
-@@ -6086,6 +6089,8 @@
+@@ -6105,6 +6108,8 @@ retry:
          }
  
          if (nxt_unit_is_read_queue(rbuf)) {
