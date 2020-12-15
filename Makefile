@@ -33,7 +33,7 @@ unit:
 	@echo "Fetching Unit source from repo ..."
 	hg clone http://hg.nginx.org/unit
 
-unit/.patched: patches | unit
+unit/.patched: | unit
 	@echo "Applying patches ..."
 	cd unit && \
 	for p in ../patches/*.patch; do patch -p1 -i $$p; done && \
