@@ -39,26 +39,24 @@ diff --git a/src/nxt_app_queue.h b/src/nxt_app_queue.h
  }
  
  
-@@ -50,8 +50,8 @@ nxt_inline nxt_int_t
+@@ -50,6 +50,7 @@ nxt_inline nxt_int_t
  nxt_app_queue_send(nxt_app_queue_t volatile *q, const void *p,
      uint8_t size, uint32_t tracking, int *notify, uint32_t *cookie)
  {
-+    int                    i;
++    int                    n;
      nxt_app_queue_item_t   *qi;
--    nxt_app_nncq_atomic_t  i;
+     nxt_app_nncq_atomic_t  i;
  
-     i = nxt_app_nncq_dequeue(&q->free_items);
-     if (i == nxt_app_nncq_empty(&q->free_items)) {
-@@ -67,16 +67,23 @@ nxt_app_queue_send(nxt_app_queue_t volat
+@@ -67,16 +68,23 @@ nxt_app_queue_send(nxt_app_queue_t volat
  
      nxt_app_nncq_enqueue(&q->queue, i);
  
 -    i = nxt_atomic_fetch_add(&q->nitems, 1);
-+    i = nxt_atomic_cmp_set(&q->notified, 0, 1);
++    n = nxt_atomic_cmp_set(&q->notified, 0, 1);
  
      if (notify != NULL) {
 -        *notify = (i == 0);
-+        *notify = i;
++        *notify = n;
      }
  
      return NXT_OK;
@@ -75,7 +73,7 @@ diff --git a/src/nxt_app_queue.h b/src/nxt_app_queue.h
  nxt_inline nxt_bool_t
  nxt_app_queue_cancel(nxt_app_queue_t volatile *q, uint32_t cookie,
      uint32_t tracking)
-@@ -110,8 +117,6 @@ nxt_app_queue_recv(nxt_app_queue_t volat
+@@ -110,8 +118,6 @@ nxt_app_queue_recv(nxt_app_queue_t volat
  
      nxt_app_nncq_enqueue(&q->free_items, i);
  
