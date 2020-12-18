@@ -82,12 +82,21 @@ def wrk(n, c, url):
 
         r = re.search('^\s*Latency\s+([0-9.]+)([^\s]+)', l)
         if r:
-            res['latency'] = float(r[1]);
+            if r[2] == 'us':
+                m = 1.0
+            elif r[2] == 'ms':
+                m = 1000.0
+            elif r[2] == 's':
+                m = 1000000.0
+            else:
+                m = 1.0
+
+            res['latency'] = float(r[1]) * m
             continue
 
     return res
 
-def filtered_wrk(n, c, url, min_time=1.0, max_dev=0.01):
+def filtered_wrk(n, c, url, min_time=1.0, max_dev=0.02, min_hist_size=4, max_hist_size=8):
     rps_history = []
     var_mean = {}
 
@@ -95,7 +104,7 @@ def filtered_wrk(n, c, url, min_time=1.0, max_dev=0.01):
     if n < c:
         n = c
 
-    while i < 10:
+    while i < max_hist_size:
         r = wrk(n, c, url)
 
         if r is None:
@@ -107,10 +116,10 @@ def filtered_wrk(n, c, url, min_time=1.0, max_dev=0.01):
 
         rps_history.append(rps)
 
-        m = mean(rps_history[-5:])
+        m = mean(rps_history[-min_hist_size:])
 
-        if len(rps_history) >= 5:
-            dev = stdev(rps_history[-5:]) / m
+        if len(rps_history) >= min_hist_size:
+            dev = stdev(rps_history[-min_hist_size:]) / m
         else:
             dev = None
 
