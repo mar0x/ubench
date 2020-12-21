@@ -70,7 +70,7 @@ unit/ctags: | unit
 .PHONY: start start-unit start-uvicorn start-jetty start-go
 start: start-unit
 
-start-unit: unit/unit.pid
+start-unit: unit/unit.pid hw-static
 
 unit/unit.pid: SHELL:=/bin/bash
 unit/unit.pid: | unit/build/unitd $(HW_LIST) $(NODE_MODULE)
@@ -82,15 +82,19 @@ unit/unit.pid: | unit/build/unitd $(HW_LIST) $(NODE_MODULE)
 	@$(WAIT_3_DONE)
 	@curl -X PUT -d @unit.conf http://127.0.0.1:8443/config
 	@ps aux | grep unit | grep -v grep
-	@echo "Set router threads CPU affinity ..."
-	@rpid=`ps aux | grep -F 'unit: router' | grep -v grep | awk '{ print $$2 }'` && \
-	c=7; for p in `ls /proc/$$rpid/task/`; do taskset -c -p $$c $$p >/dev/null; (( c++ )); done
-	@echo "Set C-application processes CPU affinity ..."
-	@c=0; for p in `ps aux | grep hw_c | grep -v grep | awk '{ print $$2 }'`; do taskset -c -p $$c $$p >/dev/null; (( c++ )); done
-	@echo "Set WSGI application processes CPU affinity ..."
-	@c=0; for p in `ps aux | grep hw-wsgi | grep -v grep | awk '{ print $$2 }'`; do taskset -c -p $$c $$p >/dev/null; (( c++ )); done
-	@echo "Set ASGI (uvloop) application processes CPU affinity ..."
-	@c=0; for p in `ps aux | grep hw-asgi-uvloop | grep -v grep | awk '{ print $$2 }'`; do taskset -c -p $$c $$p >/dev/null; (( c++ )); done
+
+
+.PHONY: hw-static
+hw-static: $(addprefix hw/static/,index.html 1k 4k 16k 64k 1m)
+
+hw/static:
+	mkdir -p $@
+
+hw/static/index.html: | hw/static unit/unit.pid
+	curl -o $@ http://127.0.0.1:8405/
+
+hw/static/%: | hw/static unit/unit.pid
+	curl -o $@ http://127.0.0.1:8405/$*
 
 
 start-uvicorn: hw/uvicorn.pid
@@ -100,10 +104,8 @@ hw/uvicorn.pid: | hw/venv/.uvicorn hw/venv/.uvloop
 	@echo -n "Starting uvicorn "
 	@cd hw && source venv/bin/activate && \
 	$(ULIMIT_FILES) && \
-	( uvicorn --host 0.0.0.0 --port 8300 --loop uvloop --log-level warning --no-access-log --no-use-colors --workers 8 hw-asgi:application & )
+	( uvicorn --host 0.0.0.0 --port 8300 --loop uvloop --log-level warning --no-access-log --no-use-colors --workers 16 hw-asgi:application & )
 	@$(WAIT_3_DONE)
-	@echo "Set uvicorn application processes CPU affinity ..."
-	@c=0; for p in `ps aux | grep spawn_main | grep -v grep | awk '{ print $$2 }'`; do taskset -c -p $$c $$p >/dev/null; (( c++ )); done
 	@ps aux | grep 'spawn_main\|bin/uvicorn' | grep -v grep | awk '{ print $$2 }' > $@
 
 

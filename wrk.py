@@ -14,7 +14,7 @@ from datetime import datetime
 nreq = 10000
 mydir = os.path.dirname(sys.argv[0])
 wrk_bin = os.path.join(mydir, 'wrk', 'wrk')
-max_threads = 14
+max_threads = 16
 
 detailed = open("detailed.log", 'a')
 result = open("result.txt", 'a')
