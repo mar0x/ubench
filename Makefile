@@ -67,8 +67,9 @@ unit/build/unitd $(LIBUNIT) &: unit/build/.configure
 unit/ctags: | unit
 	cd unit && ctags -R src go
 
-.PHONY: start start-unit start-uvicorn start-jetty start-go
+.PHONY: start start-all start-unit start-uvicorn start-jetty start-go
 start: start-unit
+start-all: start-unit start-uvicorn start-jetty start-go
 
 start-unit: unit/unit.pid hw-static
 
